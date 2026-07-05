@@ -156,6 +156,15 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Microsoft
 .qp-finish { width: 100%; margin-top: 14px; background: #4A90D9; color: #fff; border: none; padding: 12px; border-radius: 8px; font-size: 15px; cursor: pointer; }
 .qp-finish:active { background: #357ABD; }
 .q-fig { max-width: 100%; display: block; margin: 12px auto 4px; border: 1px solid #eaeaea; border-radius: 6px; background: #fff; }
+/* 自定义确认弹窗(替代原生 confirm,统一 取消/确定,确定为红色) */
+.cf-mask { position: fixed; inset: 0; background: rgba(0,0,0,.45); display: flex; align-items: center; justify-content: center; z-index: 9999; padding: 24px; }
+.cf-box { background: #fff; border-radius: 14px; width: 100%; max-width: 320px; overflow: hidden; box-shadow: 0 8px 30px rgba(0,0,0,.25); }
+.cf-msg { padding: 24px 20px; font-size: 15px; line-height: 1.6; color: #333; text-align: center; white-space: pre-wrap; }
+.cf-btns { display: flex; border-top: 1px solid #f0f0f0; }
+.cf-btn { flex: 1; padding: 14px; font-size: 16px; border: none; background: #fff; cursor: pointer; }
+.cf-btn.cf-cancel { color: #666; border-right: 1px solid #f0f0f0; }
+.cf-btn.cf-ok { color: #ff4d4f; font-weight: bold; }
+.cf-btn:active { background: #f5f5f5; }
 </style>
 </head>
 <body>
@@ -346,15 +355,43 @@ function submitAuth() {
   showHome();
 }
 function logout() {
-  if (!confirm('确定退出登录？(本机数据仍保留,下次登录可继续)')) return;
-  currentUser = null;
-  saveGlobal('currentUser', null);
-  quizState = {}; // 清掉内存里的答题态;进度已存在 localStorage,下次登录可恢复
-  pageStack = [];
-  showLogin();
+  askConfirm('确定退出登录？(本机数据仍保留,下次登录可继续)', () => {
+    currentUser = null;
+    saveGlobal('currentUser', null);
+    quizState = {}; // 清掉内存里的答题态;进度已存在 localStorage,下次登录可恢复
+    pageStack = [];
+    showLogin();
+  });
 }
 
 // ===== 错题 =====
+// ===== 自定义确认弹窗(取消/确定,确定红色;替代各浏览器样式不一的原生 confirm) =====
+function askConfirm(message, onOk) {
+  const mask = document.createElement('div');
+  mask.className = 'cf-mask';
+  const box = document.createElement('div');
+  box.className = 'cf-box';
+  const msg = document.createElement('div');
+  msg.className = 'cf-msg';
+  msg.textContent = message;
+  const btns = document.createElement('div');
+  btns.className = 'cf-btns';
+  const cancel = document.createElement('button');
+  cancel.className = 'cf-btn cf-cancel';
+  cancel.textContent = '取消';
+  const ok = document.createElement('button');
+  ok.className = 'cf-btn cf-ok';
+  ok.textContent = '确定';
+  btns.appendChild(cancel); btns.appendChild(ok);
+  box.appendChild(msg); box.appendChild(btns);
+  mask.appendChild(box);
+  document.body.appendChild(mask);
+  const close = () => { if (mask.parentNode) mask.parentNode.removeChild(mask); };
+  cancel.onclick = close;
+  ok.onclick = () => { close(); if (onOk) onOk(); };
+  mask.addEventListener('click', e => { if (e.target === mask) close(); });
+}
+
 function addWrong(q) {
   if (!wrongList.find(x => x.id === q.id)) {
     wrongList.unshift(q);
@@ -458,11 +495,11 @@ function showPreviewChapter(i) {
 
 // ===== 学习统计重置 =====
 function resetProgress() {
-  if (confirm('确定把学习统计清零？(不影响错题本和收藏)')) {
+  askConfirm('确定把学习统计清零？(不影响错题本和收藏)', () => {
     progress = { total: 0, correct: 0, wrong: 0 };
     save('progress', progress);
     showHome();
-  }
+  });
 }
 
 // ===== 开始答题 =====
@@ -525,14 +562,17 @@ function resumeQuizMode(mode, backFn) {
 // 启动某模式:若该模式有未完成进度,先确认是否覆盖重开(想继续请走首页绿色"继续"入口);backFn=返回目标
 function launchQuiz(mode, title, isExam, buildFn, backFn) {
   const saved = loadQuizMode(mode);
-  if (hasProgress(saved) &&
-      !confirm('《' + title + '》还有未完成的进度(已答 ' + savedAnsweredCount(saved) + '/' + saved.questions.length + ')。\n重新开始会覆盖它(想继续请点首页绿色「继续」按钮)。确定重新开始吗?')) {
-    return;
+  const _proceed = () => {
+    const questions = buildFn();
+    if (!questions.length) { alert('该范围内暂无题目'); return; }
+    pageStack.push(backFn || showHome);
+    startQuiz(questions, title, isExam, mode);
+  };
+  if (hasProgress(saved)) {
+    askConfirm('《' + title + '》还有未完成的进度(已答 ' + savedAnsweredCount(saved) + '/' + saved.questions.length + ')。\n重新开始会覆盖它(想继续请点首页绿色「继续」按钮)。确定重新开始吗?', _proceed);
+  } else {
+    _proceed();
   }
-  const questions = buildFn();
-  if (!questions.length) { alert('该范围内暂无题目'); return; }
-  pageStack.push(backFn || showHome);
-  startQuiz(questions, title, isExam, mode);
 }
 
 function startQuiz(questions, title, isExam, mode) {
@@ -686,9 +726,12 @@ function answeredCount() {
 
 function finishQuiz() {
   const left = quizState.questions.length - answeredCount();
-  if (left > 0 && !confirm('还有 ' + left + ' 题未作答,确定交卷查看结果吗?')) return;
-  closeQuestionPicker();
-  showResult();
+  const _done = () => { closeQuestionPicker(); showResult(); };
+  if (left > 0) {
+    askConfirm('还有 ' + left + ' 题未作答,确定交卷查看结果吗?', _done);
+  } else {
+    _done();
+  }
 }
 
 // ===== 题目目录(选择题目) =====
@@ -830,8 +873,8 @@ function renderQCard(q, i, from) {
 
 function removeWrong(i) { wrongList.splice(i, 1); save('wrong', wrongList); showWrongTab(); }
 function removeFav(i) { favList.splice(i, 1); save('fav', favList); showFavTab(); }
-function clearWrong() { if(confirm('确定清空错题？')){wrongList=[];save('wrong',wrongList);showWrongTab();} }
-function clearFav() { if(confirm('确定清空收藏？')){favList=[];save('fav',favList);showFavTab();} }
+function clearWrong() { askConfirm('确定清空错题？', () => { wrongList=[]; save('wrong',wrongList); showWrongTab(); }); }
+function clearFav() { askConfirm('确定清空收藏？', () => { favList=[]; save('fav',favList); showFavTab(); }); }
 function practiceWrong() { launchQuiz('wrong', '错题重练', false, () => shuffle(wrongList), showWrongTab); }
 function practiceFav() { launchQuiz('fav', '收藏练习', false, () => shuffle(favList), showFavTab); }
 function practiceOne(listName, i) {
